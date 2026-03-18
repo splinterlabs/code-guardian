@@ -1,0 +1,18 @@
+{
+  "name": "secops-toolkit",
+  "description": "Security operations toolkit: SAST scanning, vulnerability tracking, compliance checking, and security memory",
+  "version": "1.0.0",
+  "author": {
+    "name": "Splinter"
+  },
+  "repository": "https://github.com/splinterlabs/secops-toolkit",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "sast",
+    "semgrep",
+    "compliance",
+    "vulnerability",
+    "devbrain"
+  ]
+}

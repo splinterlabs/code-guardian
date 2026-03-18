@@ -1,0 +1,289 @@
+# =============================================================================
+# GitOps Compliance Whitelist Configuration
+# =============================================================================
+#
+# WHAT THIS FILE DOES:
+#   This file defines environment variables and image registries that are
+#   allowed to have hardcoded values in compose files without triggering
+#   compliance errors.
+#
+# HOW IT WORKS:
+#   The gitops-compliance.py script loads this file and uses it to determine
+#   which environment variables can be hardcoded (non-secret config) and which
+#   image registries are trusted.
+#
+# HOW TO ADD NEW ENTRIES:
+#   1. Find the appropriate category below
+#   2. Add your variable/registry as a new list item
+#   3. Use glob patterns (e.g., "N8N_*") to match multiple variables
+#   4. Add a comment explaining why it's whitelisted
+#
+# ALTERNATIVE: INLINE IGNORES
+#   For one-off exceptions, use inline comments in your compose.yml:
+#     - MY_VAR=hardcoded_value  # compliance: ignore-secrets-policy
+#     image: custom/image:tag  # compliance: ignore-registry-policy
+#
+# LOAD ORDER:
+#   1. This file (repo default)
+#   2. ~/.config/homelab/compliance-whitelist.yml (user overrides, merged)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Environment Variable Whitelist
+# -----------------------------------------------------------------------------
+# Variables listed here can have hardcoded values without being flagged as
+# potential secrets. Supports glob patterns (e.g., "N8N_*").
+#
+# IMPORTANT: Never add actual secret variables here (passwords, API keys, etc.)
+# Those should use ${VAR} syntax and be injected via Portainer or .env files.
+# -----------------------------------------------------------------------------
+
+environment_whitelist:
+
+  # --- System / Container Runtime ---
+  # Basic container configuration that's safe to hardcode
+  system:
+    - TZ                    # Timezone
+    - PUID                  # Process user ID
+    - PGID                  # Process group ID
+    - USER_ID               # Alternative user ID
+    - GROUP_ID              # Alternative group ID
+    - LANG                  # Locale
+    - LANGUAGE              # Locale
+    - LC_ALL                # Locale
+    - LOG_LEVEL             # Logging verbosity
+    - GLOBAL_LOG_LEVEL      # Global logging verbosity
+
+  # --- Network / Ports ---
+  # Non-sensitive network configuration
+  network:
+    - PORT                  # Generic port
+    - WEBUI_PORT            # Web UI port
+    - SLSKD_SLSK_LISTEN_PORT # Soulseek listen port
+    - VNC_LISTENING_PORT    # VNC port
+    - TRANSPORT             # Transport protocol (e.g., sse, http)
+    - SSE_PORT              # Server-sent events port
+
+  # --- Database Configuration (Non-Secret) ---
+  # Database hostnames, ports, and database names are safe
+  # NOTE: Never add PASSWORD variables here!
+  database:
+    - MYSQL_HOST
+    - REDIS_HOST
+    - REDIS_PORT
+    - POSTGRES_USER         # Username (not password)
+    - POSTGRES_DB           # Database name
+    - DB_TYPE
+    - DB_POSTGRESDB_HOST
+    - DB_POSTGRESDB_PORT
+    - DB_POSTGRESDB_DATABASE
+    - DB_POSTGRESDB_USER    # Username (not password)
+
+  # --- Java / JVM ---
+  java:
+    - ES_JAVA_OPTS          # Elasticsearch JVM options
+
+  # --- Elasticsearch / Kibana / Filebeat ---
+  elasticsearch:
+    - discovery.type                                    # Cluster mode (single-node/cluster)
+    - xpack.security.enabled                            # X-Pack security toggle
+    - xpack.security.enrollment.enabled                 # Enrollment toggle
+    - cluster.routing.allocation.disk.watermark.low     # Disk watermark config
+    - cluster.routing.allocation.disk.watermark.high    # Disk watermark config
+    - cluster.routing.allocation.disk.watermark.flood_stage  # Disk watermark config
+    - ELASTICSEARCH_HOSTS                               # ES connection URL (Kibana)
+    - ELASTICSEARCH_HOST                                # ES connection URL (Filebeat)
+    - SERVER_NAME                                       # Kibana server name
+    - XPACK_SECURITY_ENABLED                            # Kibana security toggle
+    - NODE_OPTIONS                                      # Node.js runtime options
+
+  # --- n8n Workflow Automation ---
+  # n8n configuration (non-secret settings)
+  n8n:
+    - N8N_RUNNERS_ENABLED
+    - N8N_BLOCK_ENV_ACCESS_IN_NODE
+    - N8N_GIT_NODE_DISABLE_BARE_REPOS
+    - N8N_SECURE_COOKIE
+    - N8N_USER_FOLDER
+    - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+    - N8N_HOST
+    - N8N_RUNNERS_MODE
+    - N8N_PROXY_HOPS
+    - N8N_PORT
+    - N8N_PROTOCOL
+    - WEBHOOK_URL
+
+  # --- slskd (Soulseek) ---
+  slskd:
+    - SLSKD_REMOTE_CONFIGURATION
+
+  # --- Traefik / Infrastructure ---
+  traefik:
+    - TRAEFIK_PROVIDERS_DOCKER_APIVERSION
+    - LEGO_CA_CERTIFICATES
+    - RFC2136_NAMESERVER
+    - RFC2136_TSIG_ALGORITHM
+    - RFC2136_TSIG_KEY                                              # Key name, not the secret
+    - TRAEFIK_CERTIFICATESRESOLVERS_STEPCA_ACME_DNSCHALLENGE_PROVIDER
+
+  # --- Step-CA / PKI ---
+  stepca:
+    - DOCKER_STEPCA_INIT_NAME
+    - DOCKER_STEPCA_INIT_DNS_NAMES
+    - DOCKER_STEPCA_INIT_PROVISIONER_NAME
+    - DOCKER_STEPCA_INIT_ACME
+
+  # --- AdGuard Home ---
+  adguard:
+    - ADGUARD_PROTOCOL
+    - ADGUARD_HOSTNAME
+    - ADGUARD_PORT
+
+  # --- UniFi Poller ---
+  unpoller:
+    - UP_UNIFI_DEFAULT_SAVE_SITES
+    - UP_PROMETHEUS_HTTP_LISTEN
+    - UP_PROMETHEUS_NAMESPACE
+    - UP_INFLUXDB_DISABLE
+
+  # --- qBittorrent ---
+  qbittorrent:
+    - QBT_WEBUI_HOST_HEADERS_VALIDATION
+
+  # --- Open WebUI / SearXNG / RAG ---
+  openwebui:
+    - OLLAMA_BASE_URL
+    - OPENAI_API_BASE_URL        # LiteLLM connection URL (internal Docker network)
+    - ENABLE_RAG_WEB_SEARCH
+    - RAG_WEB_SEARCH_ENGINE
+    - SEARXNG_QUERY_URL
+    - RAG_WEB_SEARCH_RESULT_COUNT
+    - RAG_WEB_SEARCH_AUTO
+    - ENABLE_CHUNKING_AND_FLUSH
+    - AIOHTTP_CLIENT_TIMEOUT
+    - MODELS_CACHE_TTL
+    - SEARXNG_BASE_URL
+    - SEARXNG_SERVER_SECRET_KEY     # Despite name, this is a config key not a secret
+    - SEARXNG_SEARCH_FORMATS
+    - SEARXNG_ENABLED_ENGINES
+    - SEARXNG_LIMITER
+    - SEARXNG_DEBUG
+    - SEARXNG_SETTINGS
+    - ENABLE_CODE_INTERPRETER
+    - USER_AGENT
+
+  # --- LiteLLM ---
+  litellm:
+    - STORE_MODEL_IN_DB          # Feature flag to enable UI model management
+
+  # --- AnythingLLM ---
+  anythingllm:
+    - STORAGE_DIR
+    - LLM_PROVIDER
+    - OLLAMA_BASE_PATH
+    - EMBEDDING_ENGINE
+    - EMBEDDING_BASE_PATH
+    - EMBEDDING_MODEL_PREF
+    - VECTOR_DB
+    - COMMUNITY_HUB_BUNDLE_DOWNLOADS_ENABLED
+    - DISABLE_TELEMETRY
+
+  # --- CTI / Security Tools ---
+  cti:
+    - MISP_BASEURL
+    - OPENCTI_BASE_URL
+    - OPENCTI_ADMIN_EMAIL
+    - CONNECTOR_ALIENVAULT_ID
+
+  ev-dashboard:
+    - HOME_ASSISTANT_URL
+    - HOME_ASSISTANT_TOKEN
+    - HA_ELECTRICITY_TARIFF_ENTITY
+    - ELECTRICITY_RATE
+    - DASHBOARD_TITLE
+    - GRAFANA_ENABLED
+    - OTEL_ENDPOINT
+    - MYENERGI_SERIAL
+    - MYENERGI_START_DATE
+    - MYENERGI_BACKFILL_RATE
+
+  # --- Misc Application Config ---
+  misc:
+    - DARK_MODE
+    - LIBVA_DRIVER_NAME       # Hardware acceleration
+    - GENERIC_TIMEZONE
+
+  # --- Honeytoken Monitoring ---
+  # Honeytoken sidecar container configuration
+  honeytokens:
+    - SERVICE_NAME            # Service identifier for honeytoken alerts
+    - ALERT_METHOD            # Alert routing (log, wazuh, webhook)
+    - NTFY_TOPIC              # Public ntfy.sh topic ID (not a secret)
+
+  # --- Reconciler Sidecar ---
+  # Host paths passed to handler for spawning temp containers
+  reconciler:
+    - HOST_SCRIPTS_DIR        # Host path to scripts mount
+    - HOST_CONFIG_DIR         # Host path to config mount
+
+
+# -----------------------------------------------------------------------------
+# Image Registry Whitelist
+# -----------------------------------------------------------------------------
+# Images from these registries/prefixes are allowed without flagging.
+# The script checks if the image name starts with any of these prefixes.
+# -----------------------------------------------------------------------------
+
+registry_whitelist:
+  # Your private registry
+  - ghcr.io/splinterlabs/
+
+  # Trusted public registries
+  - ghcr.io/linuxserver/
+  - ghcr.io/onedr0p/
+  - ghcr.io/unpoller/
+  - ghcr.io/gchq/
+  - ghcr.io/zwave-js/
+  - ghcr.io/paperless-ngx/
+  - ghcr.io/hotio/
+  - gcr.io/cadvisor/
+  - docker.io/library/
+  - docker.elastic.co/
+  - mcr.microsoft.com
+
+  # Official vendor images
+  - postgres
+  - "redis:"
+  - "mariadb:"
+  - "rabbitmq:"
+  - "influxdb:"
+  - "eclipse-mosquitto:"
+  - nginx/
+  - traefik/
+  - grafana/
+  - prom/
+  - minio/
+  - portainer/
+  - bitnami/
+  - "alpine:"               # Used for lightweight honeytoken monitoring sidecars
+
+  # Prometheus community exporters
+  - prometheuscommunity/
+
+  # Application-specific
+  - n8nio/
+  - ugreen/
+  - adguard/
+  - smallstep/
+  - jlesage/
+  - fallenbagel/
+  - ghcr.io/seerr-team/
+  - ebrianne/
+  - containrrr/watchtower
+  - opencti/
+  - wazuh/
+  - homeassistant/
+  - esphome/
+  - koenkk/                 # Zigbee2MQTT
+  - ghcr.io/clawdbot/

@@ -1,0 +1,330 @@
+rules:
+  # ============================================================
+  # General — all languages
+  # ============================================================
+
+  - id: agent-hardcoded-api-key
+    pattern-regex: '(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*["\x27][A-Za-z0-9_\-]{16,}["\x27]'
+    message: >
+      Possible hardcoded API key or secret. Use environment variables
+      or a vault for all credentials.
+    languages: [python, typescript, javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      component: general
+
+  # ============================================================
+  # Python security patterns
+  # ============================================================
+
+  - id: py-unsafe-eval
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    message: >
+      Unsafe eval/exec usage. This is a code injection risk — never
+      execute dynamically constructed strings.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      component: python-scripts
+
+  - id: py-unsafe-deserialization
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: yaml.load($DATA)
+      - pattern: yaml.load($DATA, Loader=yaml.FullLoader)
+    message: >
+      Unsafe deserialization detected. Use yaml.safe_load() for YAML
+      and avoid pickle for untrusted data.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      component: python-scripts
+
+  - id: py-missing-timeout
+    patterns:
+      - pattern: |
+          requests.$METHOD($URL, ...)
+      - pattern-not: |
+          requests.$METHOD($URL, ..., timeout=..., ...)
+    message: >
+      HTTP request without a timeout. Always set a timeout to prevent
+      hanging processes.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: python-scripts
+
+  # ============================================================
+  # AI-generated code patterns (Python)
+  # Catches common LLM hallucination / laziness patterns
+  # ============================================================
+
+  - id: ai-unhandled-network-call
+    patterns:
+      - pattern: |
+          $RESP = requests.$METHOD(...)
+      - pattern-not-inside: |
+          try:
+              ...
+              $RESP = requests.$METHOD(...)
+              ...
+          except ...:
+              ...
+    message: >
+      Network call without try-except. AI-generated code frequently
+      omits error handling for network requests. Wrap in try-except
+      to handle ConnectionError, Timeout, and HTTPError.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: ai-code-quality
+
+  - id: ai-unhandled-async-network-call
+    patterns:
+      - pattern: |
+          $RESP = await $CLIENT.$METHOD(...)
+      - pattern-not-inside: |
+          try:
+              ...
+              $RESP = await $CLIENT.$METHOD(...)
+              ...
+          except ...:
+              ...
+    message: >
+      Async network call without try-except. Wrap in try-except to
+      handle connection failures gracefully in async contexts.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: ai-code-quality
+
+  - id: ai-broad-exception-catch
+    pattern: |
+      except Exception:
+          ...
+    message: >
+      Overly broad exception catch. AI tends to generate catch-all
+      handlers that swallow errors silently. Catch specific exceptions
+      (ConnectionError, ValueError, etc.) instead.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: code-quality
+      component: ai-code-quality
+
+  - id: ai-bare-except
+    pattern: |
+      except:
+          ...
+    message: >
+      Bare except clause catches everything including KeyboardInterrupt
+      and SystemExit. Always specify the exception type.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: code-quality
+      component: ai-code-quality
+
+  - id: ai-unused-import-subprocess
+    pattern: |
+      import subprocess
+    message: >
+      subprocess imported — verify this is intentional. AI sometimes
+      introduces subprocess calls where safer alternatives exist.
+      If needed, use subprocess.run() with check=True and shell=False.
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: security
+      component: ai-code-quality
+
+  - id: ai-deprecated-datetime-utcnow
+    pattern-either:
+      - pattern: datetime.utcnow()
+      - pattern: datetime.datetime.utcnow()
+    message: >
+      datetime.utcnow() is deprecated since Python 3.12. AI models
+      trained on older code frequently generate this. Use
+      datetime.now(datetime.timezone.utc) instead.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: code-quality
+      component: ai-code-quality
+
+  - id: ai-string-format-logging
+    pattern-either:
+      - pattern: logging.$METHOD(f"...")
+      - pattern: logging.$METHOD("..." % ...)
+      - pattern: logging.$METHOD("...".format(...))
+    message: >
+      String formatting in logging call. Use lazy formatting with
+      logging.info("msg %s", var) to avoid formatting cost when
+      the log level is disabled. Common AI antipattern.
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: code-quality
+      component: ai-code-quality
+
+  # ============================================================
+  # Bun / TypeScript (homelab scripts)
+  # ============================================================
+
+  - id: ts-shell-injection
+    patterns:
+      - pattern: |
+          Bun.spawn([..., $USERINPUT, ...])
+      - pattern: |
+          Bun.spawn({cmd: [..., $USERINPUT, ...]})
+    message: >
+      Potential shell injection via Bun.spawn with dynamic input.
+      Validate and sanitize all arguments passed to subprocesses.
+    languages: [typescript, javascript]
+    severity: WARNING
+    metadata:
+      category: security
+      component: homelab-scripts
+
+  - id: ts-fetch-no-error-handling
+    patterns:
+      - pattern: |
+          const $RESP = await fetch(...);
+          const $DATA = await $RESP.json();
+      - pattern-not: |
+          const $RESP = await fetch(...);
+          if (!$RESP.ok) { ... }
+          ...
+    message: >
+      Fetch call without response status check. Always verify
+      response.ok before parsing the body.
+    languages: [typescript, javascript]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: homelab-scripts
+
+  - id: ts-unhandled-fetch
+    patterns:
+      - pattern: |
+          await fetch(...)
+      - pattern-not-inside: |
+          try {
+              ...
+              await fetch(...)
+              ...
+          } catch ($ERR) {
+              ...
+          }
+    message: >
+      Fetch call without try-catch. Network requests can fail —
+      wrap in try-catch for graceful error handling.
+    languages: [typescript, javascript]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: ai-code-quality
+
+  - id: ts-console-log-in-production
+    pattern: console.log(...)
+    message: >
+      console.log left in code. Consider using the structured logger
+      (structured-logger.ts) or removing before deployment.
+    languages: [typescript, javascript]
+    severity: INFO
+    metadata:
+      category: code-quality
+      component: homelab-scripts
+
+  # ============================================================
+  # Docker / Infrastructure
+  # ============================================================
+
+  - id: docker-privileged-container
+    pattern-regex: 'privileged:\s*true'
+    message: >
+      Container running in privileged mode. This is a significant
+      security risk — use specific capabilities instead.
+    languages: [yaml]
+    severity: ERROR
+    metadata:
+      category: security
+      component: infrastructure
+
+  - id: docker-exposed-port-binding
+    pattern-regex: 'ports:\s*\n\s*-\s*"0\.0\.0\.0:'
+    message: >
+      Port bound to 0.0.0.0 (all interfaces). Bind to 127.0.0.1
+      unless the service needs external access via Traefik.
+    languages: [yaml]
+    severity: WARNING
+    metadata:
+      category: security
+      component: infrastructure
+
+  - id: docker-run-as-root
+    pattern-regex: 'user:\s*["\x27]?root["\x27]?'
+    message: >
+      Container explicitly running as root. Use a non-root user
+      or set user to a specific UID:GID for better isolation.
+    languages: [yaml]
+    severity: WARNING
+    metadata:
+      category: security
+      component: infrastructure
+
+  - id: docker-no-healthcheck
+    pattern-regex: 'image:\s*\S+\n(?:(?!healthcheck)[\s\S])*?(?=\n\s+\w+:\s*\n|\Z)'
+    message: >
+      Service without a healthcheck defined. Add healthcheck for
+      proper container orchestration and monitoring.
+    languages: [yaml]
+    severity: INFO
+    metadata:
+      category: reliability
+      component: infrastructure
+
+  - id: docker-no-read-only-rootfs
+    pattern-regex: 'image:\s*\S+\n(?:(?!read_only:\s*true)[\s\S])*?(?=\n\s+\w+:\s*\n|\Z)'
+    message: >
+      Container without read_only rootfs. Consider adding
+      read_only: true and explicitly mounting writable paths
+      via tmpfs or volumes.
+    languages: [yaml]
+    severity: INFO
+    metadata:
+      category: security
+      component: infrastructure
+
+  - id: traefik-no-tls
+    patterns:
+      - pattern-regex: 'rule:\s*Host\('
+      - pattern-not-regex: 'tls'
+    message: >
+      Traefik route without TLS configuration. Ensure all routes
+      use TLS, especially for services exposed beyond localhost.
+    languages: [yaml]
+    severity: WARNING
+    metadata:
+      category: security
+      component: infrastructure
+
+  - id: docker-latest-tag
+    pattern-regex: 'image:\s*\S+:latest'
+    message: >
+      Using :latest tag for container image. Pin to a specific
+      version for reproducible deployments.
+    languages: [yaml]
+    severity: WARNING
+    metadata:
+      category: reliability
+      component: infrastructure
