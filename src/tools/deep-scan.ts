@@ -662,7 +662,7 @@ function formatReport(reports: ScanReport[]): string {
 
 	lines.push("");
 	lines.push("╔══════════════════════════════════════════════════════════╗");
-	lines.push("║           HOMELAB DEEP SCAN REPORT                     ║");
+	lines.push("║             CODE GUARDIAN DEEP SCAN                      ║");
 	lines.push(`║           ${new Date().toISOString().slice(0, 19).replace("T", " ")}                    ║`);
 	lines.push("╚══════════════════════════════════════════════════════════╝");
 	lines.push("");
@@ -761,7 +761,7 @@ async function sendWebhooks(config: DeepScanConfig, reports: ScanReport[]): Prom
 	const priorityScore = computePriorityScore(reports);
 
 	const payload = {
-		scan: "homelab-deep-scan",
+		scan: "code-guardian-deep-scan",
 		timestamp: new Date().toISOString(),
 		status: agg.total === 0 ? "clean" : highest === "CRITICAL" ? "critical" : highest === "HIGH" ? "warning" : "info",
 		priority_score: priorityScore,
@@ -832,10 +832,10 @@ async function main() {
 
 	if (values.help) {
 		console.log(`
-deep-scan.ts — Homelab deep scan orchestrator
+deep-scan.ts — Code Guardian deep scan orchestrator
 
-Usage (run from HomeLab root):
-  bun run homelab-dev-scripts/src/tools/deep-scan.ts [options]
+Usage:
+  bun run src/tools/deep-scan.ts [options]
 
 Options:
   -c, --config <path>         Path to config file (TypeScript export default)

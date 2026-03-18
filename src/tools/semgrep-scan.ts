@@ -95,7 +95,7 @@ function parseConfig(): ScanConfig {
 
 	if (values.help) {
 		console.log(`
-semgrep-scan.ts — Homelab Semgrep wrapper
+semgrep-scan.ts — Code Guardian Semgrep wrapper
 
 Usage:
   bun run src/tools/semgrep-scan.ts [options] [target-dir]

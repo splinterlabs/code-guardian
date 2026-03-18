@@ -177,7 +177,7 @@ rules:
       component: ai-code-quality
 
   # ============================================================
-  # Bun / TypeScript (homelab scripts)
+  # Bun / TypeScript
   # ============================================================
 
   - id: ts-shell-injection
@@ -193,7 +193,7 @@ rules:
     severity: WARNING
     metadata:
       category: security
-      component: homelab-scripts
+      component: typescript-scripts
 
   - id: ts-fetch-no-error-handling
     patterns:
@@ -211,7 +211,7 @@ rules:
     severity: WARNING
     metadata:
       category: reliability
-      component: homelab-scripts
+      component: typescript-scripts
 
   - id: ts-unhandled-fetch
     patterns:
@@ -243,7 +243,7 @@ rules:
     severity: INFO
     metadata:
       category: code-quality
-      component: homelab-scripts
+      component: typescript-scripts
 
   # ============================================================
   # Docker / Infrastructure

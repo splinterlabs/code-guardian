@@ -25,7 +25,7 @@
 #
 # LOAD ORDER:
 #   1. This file (repo default)
-#   2. ~/.config/homelab/compliance-whitelist.yml (user overrides, merged)
+#   2. ~/.config/code-guardian/compliance-whitelist.yml (user overrides, merged)
 #
 # =============================================================================
 
@@ -236,8 +236,8 @@ environment_whitelist:
 # -----------------------------------------------------------------------------
 
 registry_whitelist:
-  # Your private registry
-  - ghcr.io/splinterlabs/
+  # Your private registry (add your own here)
+  # - ghcr.io/yourorg/
 
   # Trusted public registries
   - ghcr.io/linuxserver/

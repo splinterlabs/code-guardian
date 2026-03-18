@@ -244,10 +244,10 @@ describe("formatProfileSection", () => {
 	test("formats profile into block with required content", () => {
 		const profile: ProfileResult = {
 			topRules: [
-				{ rule: "ts-unhandled-fetch", count: 47, component: "homelab-scripts" },
+				{ rule: "ts-unhandled-fetch", count: 47, component: "typescript-scripts" },
 				{ rule: "ai-broad-exception", count: 12, component: "python-scripts" },
 			],
-			hotspots: ["homelab-dev-scripts", "python-scripts"],
+			hotspots: ["dev-scripts", "python-scripts"],
 			openCount: 23,
 			regressionCount: 2,
 			highCount: 4,

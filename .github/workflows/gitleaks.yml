@@ -4,7 +4,7 @@
 # Usage in caller repo:
 #   jobs:
 #     secrets:
-#       uses: splinterlabs/shared-workflows/.github/workflows/gitleaks.yml@main
+#       uses: splinterlabs/code-guardian/.github/workflows/gitleaks.yml@main
 
 name: Gitleaks Secret Detection
 
