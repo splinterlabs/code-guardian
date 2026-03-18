@@ -1,0 +1,37 @@
+# Security Audit — Uses splinterlabs/shared-workflows
+
+name: Security Audit
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  secrets:
+    uses: splinterlabs/shared-workflows/.github/workflows/gitleaks.yml@main
+    with:
+      fail_on_leak: true
+
+  sast:
+    uses: splinterlabs/shared-workflows/.github/workflows/semgrep.yml@main
+    with:
+      config: 'p/security-audit'
+      severity: 'WARNING'
+      fail_on_findings: false
+      extra_rulesets: 'p/typescript'
+
+  dependencies:
+    uses: splinterlabs/shared-workflows/.github/workflows/dependency-audit.yml@main
+    with:
+      fail_on_vulnerabilities: false
+      npm_audit_level: 'high'
