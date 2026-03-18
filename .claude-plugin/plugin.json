@@ -1,6 +1,6 @@
 {
   "name": "secops-toolkit",
-  "description": "Security operations toolkit: SAST scanning, vulnerability tracking, compliance checking, and security memory",
+  "description": "Security operations toolkit: SAST scanning, vulnerability tracking, compliance checking, reusable CI workflows, and security memory",
   "version": "1.0.0",
   "author": {
     "name": "Splinter"
@@ -11,8 +11,10 @@
     "security",
     "sast",
     "semgrep",
+    "gitleaks",
+    "trivy",
     "compliance",
-    "vulnerability",
-    "devbrain"
+    "ci",
+    "workflows"
   ]
 }

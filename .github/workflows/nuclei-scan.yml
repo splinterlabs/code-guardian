@@ -1,0 +1,338 @@
+# Nuclei DAST Scan — Dynamic Application Security Testing
+# Reusable workflow for scanning staging/preview environments
+#
+# Usage in caller repo:
+#   jobs:
+#     dast:
+#       uses: splinterlabs/shared-workflows/.github/workflows/nuclei-scan.yml@main
+#       with:
+#         target_url: "https://staging.example.com"
+#       secrets:
+#         nuclei_token: ${{ secrets.NUCLEI_CLOUD_TOKEN }}  # Optional
+
+name: Nuclei DAST Scan
+
+on:
+  workflow_call:
+    inputs:
+      target_url:
+        description: 'Target URL to scan (staging/preview environment)'
+        required: true
+        type: string
+      severity:
+        description: 'Minimum severity to report (info, low, medium, high, critical)'
+        required: false
+        type: string
+        default: 'medium'
+      template_tags:
+        description: 'Nuclei template tags to include (comma-separated)'
+        required: false
+        type: string
+        default: 'cve,oast,misconfig,exposure,takeover'
+      exclude_tags:
+        description: 'Template tags to exclude (comma-separated)'
+        required: false
+        type: string
+        default: 'dos,fuzz,intrusive'
+      rate_limit:
+        description: 'Requests per second rate limit'
+        required: false
+        type: number
+        default: 50
+      timeout:
+        description: 'Scan timeout in minutes'
+        required: false
+        type: number
+        default: 30
+      fail_on_findings:
+        description: 'Fail workflow if vulnerabilities found at or above severity'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      nuclei_token:
+        description: 'Optional Nuclei Cloud API token for enhanced templates'
+        required: false
+    outputs:
+      findings_count:
+        description: 'Number of findings at or above severity threshold'
+        value: ${{ jobs.nuclei-scan.outputs.findings_count }}
+      sarif_artifact:
+        description: 'Name of the SARIF artifact uploaded'
+        value: ${{ jobs.nuclei-scan.outputs.sarif_artifact }}
+
+jobs:
+  nuclei-scan:
+    name: Nuclei DAST
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout }}
+
+    outputs:
+      findings_count: ${{ steps.scan.outputs.findings_count }}
+      sarif_artifact: ${{ steps.upload.outputs.artifact_name }}
+
+    steps:
+      - name: Validate target URL
+        id: validate
+        run: |
+          TARGET="${{ inputs.target_url }}"
+
+          # Basic URL validation
+          if [[ ! "$TARGET" =~ ^https?:// ]]; then
+            echo "::error::Target URL must start with http:// or https://"
+            exit 1
+          fi
+
+          # Block production patterns (safety check)
+          if [[ "$TARGET" =~ (prod|production|www\.).*\.(com|org|io|net)$ ]]; then
+            echo "::warning::Target URL appears to be production — ensure you have authorization"
+          fi
+
+          # Verify target is reachable
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$TARGET" || echo "000")
+          if [[ "$HTTP_CODE" == "000" ]]; then
+            echo "::error::Target URL is not reachable"
+            exit 1
+          fi
+
+          echo "target_reachable=true" >> $GITHUB_OUTPUT
+          echo "Target $TARGET responded with HTTP $HTTP_CODE"
+
+      - name: Install Nuclei
+        run: |
+          # Install latest nuclei
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+          # Verify installation
+          ~/go/bin/nuclei -version
+
+      - name: Update Nuclei templates
+        env:
+          NUCLEI_CLOUD_API_KEY: ${{ secrets.nuclei_token }}
+        run: |
+          nuclei -update-templates
+
+          # Show template stats
+          echo "=== Template Statistics ==="
+          nuclei -tl -stats
+
+      - name: Run Nuclei scan
+        id: scan
+        env:
+          NUCLEI_CLOUD_API_KEY: ${{ secrets.nuclei_token }}
+        run: |
+          TARGET="${{ inputs.target_url }}"
+          SEVERITY="${{ inputs.severity }}"
+          TAGS="${{ inputs.template_tags }}"
+          EXCLUDE="${{ inputs.exclude_tags }}"
+          RATE="${{ inputs.rate_limit }}"
+
+          mkdir -p results
+
+          echo "=== Scan Configuration ==="
+          echo "Target: $TARGET"
+          echo "Severity threshold: $SEVERITY"
+          echo "Tags: $TAGS"
+          echo "Excluded: $EXCLUDE"
+          echo "Rate limit: ${RATE} req/s"
+          echo ""
+
+          # Build nuclei command
+          CMD="nuclei -u $TARGET"
+          CMD="$CMD -severity $SEVERITY,high,critical"
+          CMD="$CMD -tags $TAGS"
+          CMD="$CMD -exclude-tags $EXCLUDE"
+          CMD="$CMD -rate-limit $RATE"
+          CMD="$CMD -bulk-size 25"
+          CMD="$CMD -concurrency 10"
+          CMD="$CMD -timeout 10"
+          CMD="$CMD -retries 2"
+          CMD="$CMD -no-color"
+          CMD="$CMD -stats"
+          CMD="$CMD -sarif-export results/nuclei.sarif"
+          CMD="$CMD -json-export results/nuclei.json"
+          CMD="$CMD -output results/nuclei.txt"
+
+          echo "=== Starting Scan ==="
+          set +e  # Don't fail on nuclei exit code
+          eval $CMD
+          SCAN_EXIT=$?
+          set -e
+
+          # Count findings
+          if [[ -f results/nuclei.json ]]; then
+            FINDINGS=$(jq -s 'length' results/nuclei.json 2>/dev/null || echo "0")
+          else
+            FINDINGS=0
+          fi
+
+          echo "findings_count=$FINDINGS" >> $GITHUB_OUTPUT
+          echo ""
+          echo "=== Scan Complete ==="
+          echo "Findings: $FINDINGS"
+
+          # Show findings summary if any
+          if [[ -f results/nuclei.json && "$FINDINGS" -gt 0 ]]; then
+            echo ""
+            echo "=== Finding Summary ==="
+            jq -r '.info.severity + " | " + .info.name + " | " + .matched' results/nuclei.json 2>/dev/null | sort | uniq -c | sort -rn || true
+          fi
+
+      - name: Generate HTML report
+        if: always()
+        run: |
+          if [[ -f results/nuclei.json ]]; then
+            # Simple HTML report generation
+            cat > results/report.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Nuclei DAST Report</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; }
+              h1 { color: #1a1a2e; }
+              .summary { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+              .finding { border: 1px solid #dee2e6; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+              .critical { border-left: 4px solid #dc3545; }
+              .high { border-left: 4px solid #fd7e14; }
+              .medium { border-left: 4px solid #ffc107; }
+              .low { border-left: 4px solid #17a2b8; }
+              .info { border-left: 4px solid #6c757d; }
+              .severity { font-weight: bold; text-transform: uppercase; }
+              .severity-critical { color: #dc3545; }
+              .severity-high { color: #fd7e14; }
+              .severity-medium { color: #856404; }
+              .severity-low { color: #17a2b8; }
+              .severity-info { color: #6c757d; }
+              code { background: #e9ecef; padding: 2px 6px; border-radius: 4px; }
+              pre { background: #1a1a2e; color: #f8f9fa; padding: 16px; border-radius: 8px; overflow-x: auto; }
+            </style>
+          </head>
+          <body>
+            <h1>Nuclei DAST Scan Report</h1>
+            <div class="summary">
+              <strong>Target:</strong> ${{ inputs.target_url }}<br>
+              <strong>Scan Date:</strong> $(date -u +"%Y-%m-%d %H:%M UTC")<br>
+              <strong>Severity Threshold:</strong> ${{ inputs.severity }}
+            </div>
+            <div id="findings"></div>
+            <script>
+          HTMLEOF
+
+            # Add findings data
+            echo "const findings = " >> results/report.html
+            jq -s '.' results/nuclei.json >> results/report.html
+            echo ";" >> results/report.html
+
+            cat >> results/report.html << 'HTMLEOF'
+              findings.forEach(f => {
+                const div = document.createElement('div');
+                div.className = `finding ${f.info.severity}`;
+                div.innerHTML = `
+                  <span class="severity severity-${f.info.severity}">${f.info.severity}</span>
+                  <strong>${f.info.name}</strong>
+                  <p>${f.info.description || 'No description available'}</p>
+                  <p><strong>Matched:</strong> <code>${f.matched}</code></p>
+                  ${f.curl_command ? `<pre>${f.curl_command}</pre>` : ''}
+                `;
+                document.getElementById('findings').appendChild(div);
+              });
+              if (findings.length === 0) {
+                document.getElementById('findings').innerHTML = '<p>No findings at the configured severity threshold.</p>';
+              }
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+          fi
+
+      - name: Upload scan results
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuclei-dast-results
+          path: results/
+          retention-days: 30
+
+      - name: Upload SARIF to GitHub Security
+        if: always() && hashFiles('results/nuclei.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results/nuclei.sarif
+          category: nuclei-dast
+        continue-on-error: true  # Don't fail if SARIF upload fails
+
+      - name: Fail on findings
+        if: inputs.fail_on_findings && steps.scan.outputs.findings_count > 0
+        run: |
+          FINDINGS=${{ steps.scan.outputs.findings_count }}
+          echo "::error::Found $FINDINGS security issues at or above ${{ inputs.severity }} severity"
+          echo ""
+          echo "Review the nuclei-dast-results artifact for details."
+          echo "To bypass this check, set fail_on_findings: false in your workflow."
+          exit 1
+
+  # Optional: Comment findings on PR
+  pr-comment:
+    name: PR Comment
+    needs: nuclei-scan
+    if: github.event_name == 'pull_request' && needs.nuclei-scan.outputs.findings_count > 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          name: nuclei-dast-results
+          path: results
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let findings = [];
+            try {
+              const data = fs.readFileSync('results/nuclei.json', 'utf8');
+              findings = JSON.parse(`[${data.split('\n').filter(l => l).join(',')}]`);
+            } catch (e) {
+              console.log('Could not parse findings:', e.message);
+            }
+
+            const severityCounts = findings.reduce((acc, f) => {
+              acc[f.info.severity] = (acc[f.info.severity] || 0) + 1;
+              return acc;
+            }, {});
+
+            const body = `## :shield: Nuclei DAST Scan Results
+
+            **Target:** \`${{ inputs.target_url }}\`
+            **Findings:** ${findings.length} issue(s) detected
+
+            | Severity | Count |
+            |----------|-------|
+            | Critical | ${severityCounts.critical || 0} |
+            | High | ${severityCounts.high || 0} |
+            | Medium | ${severityCounts.medium || 0} |
+            | Low | ${severityCounts.low || 0} |
+
+            <details>
+            <summary>View findings</summary>
+
+            ${findings.slice(0, 10).map(f => `- **[${f.info.severity.toUpperCase()}]** ${f.info.name}: \`${f.matched}\``).join('\n')}
+            ${findings.length > 10 ? `\n... and ${findings.length - 10} more` : ''}
+
+            </details>
+
+            > Download the \`nuclei-dast-results\` artifact for the full report.`;
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

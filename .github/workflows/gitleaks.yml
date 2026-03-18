@@ -1,0 +1,170 @@
+# Gitleaks Secret Detection — Scan commits for leaked secrets
+# Reusable workflow for CI/CD integration
+#
+# Usage in caller repo:
+#   jobs:
+#     secrets:
+#       uses: splinterlabs/shared-workflows/.github/workflows/gitleaks.yml@main
+
+name: Gitleaks Secret Detection
+
+on:
+  workflow_call:
+    inputs:
+      scan_depth:
+        description: 'How many commits to scan (0 = all history, default = since base branch)'
+        required: false
+        type: number
+        default: 0
+      fail_on_leak:
+        description: 'Fail workflow if secrets detected'
+        required: false
+        type: boolean
+        default: true
+      config_path:
+        description: 'Path to custom .gitleaks.toml config (relative to repo root)'
+        required: false
+        type: string
+        default: ''
+      baseline_path:
+        description: 'Path to .gitleaks-baseline.json for known/accepted findings'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      findings_count:
+        description: 'Number of potential secrets found'
+        value: ${{ jobs.gitleaks.outputs.findings_count }}
+
+jobs:
+  gitleaks:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      findings_count: ${{ steps.scan.outputs.findings_count }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comprehensive scanning
+
+      - name: Determine scan scope
+        id: scope
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # PR: scan only changed commits
+            echo "log_opts=origin/${{ github.base_ref }}..${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "mode=PR commits" >> $GITHUB_OUTPUT
+          elif [[ "${{ inputs.scan_depth }}" -gt 0 ]]; then
+            # Limited depth
+            echo "log_opts=HEAD~${{ inputs.scan_depth }}..HEAD" >> $GITHUB_OUTPUT
+            echo "mode=Last ${{ inputs.scan_depth }} commits" >> $GITHUB_OUTPUT
+          else
+            # Full history
+            echo "log_opts=" >> $GITHUB_OUTPUT
+            echo "mode=Full history" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Gitleaks
+        id: scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        continue-on-error: true
+
+      - name: Parse results
+        id: parse
+        if: always()
+        run: |
+          # Check if report exists
+          if [[ -f "gitleaks-report.json" ]]; then
+            FINDINGS=$(jq 'length' gitleaks-report.json 2>/dev/null || echo "0")
+          else
+            FINDINGS=0
+          fi
+
+          echo "findings_count=$FINDINGS" >> $GITHUB_OUTPUT
+
+          if [[ "$FINDINGS" -gt 0 ]]; then
+            echo "::warning::Gitleaks found $FINDINGS potential secret(s)"
+            echo ""
+            echo "=== Findings Summary ==="
+            jq -r '.[] | "- \(.RuleID): \(.File):\(.StartLine)"' gitleaks-report.json 2>/dev/null || true
+          else
+            echo "No secrets detected"
+          fi
+
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Fail on findings
+        if: inputs.fail_on_leak && steps.parse.outputs.findings_count > 0
+        run: |
+          echo "::error::Gitleaks detected ${{ steps.parse.outputs.findings_count }} potential secret(s)"
+          echo ""
+          echo "Review the gitleaks-report artifact for details."
+          echo ""
+          echo "If these are false positives, you can:"
+          echo "1. Add to .gitleaksignore with commit hash + rule ID"
+          echo "2. Add inline comment: // gitleaks:allow"
+          echo "3. Create a baseline file and pass baseline_path input"
+          exit 1
+
+  # PR comment with findings
+  pr-comment:
+    name: PR Comment
+    needs: gitleaks
+    if: github.event_name == 'pull_request' && needs.gitleaks.outputs.findings_count > 0
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Download report
+        uses: actions/download-artifact@v4
+        with:
+          name: gitleaks-report
+          path: .
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let findings = [];
+            try {
+              findings = JSON.parse(fs.readFileSync('gitleaks-report.json', 'utf8'));
+            } catch (e) {
+              console.log('Could not parse report');
+              return;
+            }
+
+            const body = `## :closed_lock_with_key: Gitleaks Secret Detection
+
+            **Found ${findings.length} potential secret(s) in this PR**
+
+            | Rule | File | Line |
+            |------|------|------|
+            ${findings.slice(0, 10).map(f => `| \`${f.RuleID}\` | \`${f.File}\` | ${f.StartLine} |`).join('\n')}
+            ${findings.length > 10 ? `\n... and ${findings.length - 10} more` : ''}
+
+            > If these are false positives, add them to \`.gitleaksignore\` or use \`// gitleaks:allow\` inline comments.
+            >
+            > Download the \`gitleaks-report\` artifact for the full report.`;
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

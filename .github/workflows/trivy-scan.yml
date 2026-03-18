@@ -1,0 +1,186 @@
+name: Trivy Container Scan
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'Container image to scan (e.g., ghcr.io/org/app:latest)'
+        required: false
+        type: string
+      dockerfile_path:
+        description: 'Path to Dockerfile for filesystem scan (alternative to image)'
+        required: false
+        type: string
+      severity:
+        description: 'Minimum severity to report (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)'
+        required: false
+        default: 'HIGH,CRITICAL'
+        type: string
+      fail_on_vulnerabilities:
+        description: 'Fail workflow if vulnerabilities found'
+        required: false
+        default: false
+        type: boolean
+      ignore_unfixed:
+        description: 'Ignore vulnerabilities without fixes'
+        required: false
+        default: true
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Container image to scan'
+        required: false
+        type: string
+      severity:
+        description: 'Severity filter'
+        required: false
+        default: 'HIGH,CRITICAL'
+        type: string
+
+jobs:
+  detect-images:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+      has_images: ${{ steps.find.outputs.has_images }}
+      has_dockerfiles: ${{ steps.find.outputs.has_dockerfiles }}
+      dockerfiles: ${{ steps.find.outputs.dockerfiles }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect scannable targets
+        id: find
+        run: |
+          # If explicit image provided, use that
+          if [ -n "${{ inputs.image }}" ]; then
+            echo "images=[\"${{ inputs.image }}\"]" >> $GITHUB_OUTPUT
+            echo "has_images=true" >> $GITHUB_OUTPUT
+            echo "has_dockerfiles=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find Dockerfiles for filesystem scanning
+          DOCKERFILES=$(find . -name "Dockerfile" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -20)
+
+          if [ -n "$DOCKERFILES" ]; then
+            JSON_ARRAY=$(echo "$DOCKERFILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "dockerfiles=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "has_dockerfiles=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_dockerfiles=false" >> $GITHUB_OUTPUT
+            echo "dockerfiles=[]" >> $GITHUB_OUTPUT
+          fi
+
+          # Check compose files for image references
+          IMAGES=$(grep -rh "image:" . --include="compose.yml" --include="docker-compose.yml" 2>/dev/null | \
+            grep -oP 'image:\s*\K[^\s]+' | \
+            grep -v '\${' | \
+            sort -u | \
+            head -20 || true)
+
+          if [ -n "$IMAGES" ]; then
+            JSON_ARRAY=$(echo "$IMAGES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "images=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "has_images=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_images=false" >> $GITHUB_OUTPUT
+            echo "images=[]" >> $GITHUB_OUTPUT
+          fi
+
+  scan-dockerfiles:
+    needs: detect-images
+    if: needs.detect-images.outputs.has_dockerfiles == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ !inputs.fail_on_vulnerabilities }}
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: ${{ fromJson(needs.detect-images.outputs.dockerfiles) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ matrix.dockerfile }}
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: ${{ inputs.ignore_unfixed }}
+          format: 'table'
+          output: 'trivy-results.txt'
+
+      - name: Output results
+        run: |
+          echo "### Trivy Scan: \`${{ matrix.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -s trivy-results.txt ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  scan-images:
+    needs: detect-images
+    if: needs.detect-images.outputs.has_images == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ !inputs.fail_on_vulnerabilities }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.detect-images.outputs.images) }}
+    steps:
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image }}
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: ${{ inputs.ignore_unfixed }}
+          format: 'table'
+          output: 'trivy-results.txt'
+
+      - name: Output results
+        run: |
+          echo "### Trivy Scan: \`${{ matrix.image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -s trivy-results.txt ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  summary:
+    needs: [detect-images, scan-dockerfiles, scan-images]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan Summary
+        run: |
+          echo "## Trivy Container Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Target Type | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.detect-images.outputs.has_dockerfiles }}" == "true" ]; then
+            if [ "${{ needs.scan-dockerfiles.result }}" == "success" ]; then
+              echo "| Dockerfiles | Passed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Dockerfiles | ${{ needs.scan-dockerfiles.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Dockerfiles | Skipped (none found) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.detect-images.outputs.has_images }}" == "true" ]; then
+            if [ "${{ needs.scan-images.result }}" == "success" ]; then
+              echo "| Container Images | Passed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Container Images | ${{ needs.scan-images.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Container Images | Skipped (none found) |" >> $GITHUB_STEP_SUMMARY
+          fi

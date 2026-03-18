@@ -1,0 +1,31 @@
+name: Biome Lint
+
+on:
+  workflow_call:
+    inputs:
+      biome-version:
+        description: 'Biome version to use'
+        required: false
+        type: string
+        default: 'latest'
+      paths:
+        description: 'Paths to lint (space-separated)'
+        required: false
+        type: string
+        default: '.'
+
+jobs:
+  biome:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Biome
+        uses: biomejs/setup-biome@v2
+        with:
+          version: ${{ inputs.biome-version }}
+
+      - name: Run Biome
+        run: biome ci ${{ inputs.paths }}

@@ -1,4 +1,4 @@
-# Security Audit — Uses splinterlabs/shared-workflows
+# Security Audit — self-contained
 
 name: Security Audit
 
@@ -18,12 +18,12 @@ permissions:
 
 jobs:
   secrets:
-    uses: splinterlabs/shared-workflows/.github/workflows/gitleaks.yml@main
+    uses: ./.github/workflows/gitleaks.yml
     with:
       fail_on_leak: true
 
   sast:
-    uses: splinterlabs/shared-workflows/.github/workflows/semgrep.yml@main
+    uses: ./.github/workflows/semgrep.yml
     with:
       config: 'p/security-audit'
       severity: 'WARNING'
@@ -31,7 +31,7 @@ jobs:
       extra_rulesets: 'p/typescript'
 
   dependencies:
-    uses: splinterlabs/shared-workflows/.github/workflows/dependency-audit.yml@main
+    uses: ./.github/workflows/dependency-audit.yml
     with:
       fail_on_vulnerabilities: false
       npm_audit_level: 'high'

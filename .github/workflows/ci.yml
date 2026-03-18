@@ -13,6 +13,6 @@ permissions:
 
 jobs:
   biome:
-    uses: splinterlabs/shared-workflows/.github/workflows/biome.yml@main
+    uses: ./.github/workflows/biome.yml
     with:
       paths: 'src tests'

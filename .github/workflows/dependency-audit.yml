@@ -1,0 +1,250 @@
+name: Dependency Audit
+
+on:
+  workflow_call:
+    inputs:
+      fail_on_vulnerabilities:
+        description: 'Fail the workflow if vulnerabilities are found'
+        required: false
+        default: false
+        type: boolean
+      npm_audit_level:
+        description: 'npm audit severity level (low, moderate, high, critical)'
+        required: false
+        default: 'high'
+        type: string
+      pip_audit_level:
+        description: 'pip-audit severity filter (skip-low, skip-moderate)'
+        required: false
+        default: ''
+        type: string
+  # Allow direct triggering for testing
+  workflow_dispatch:
+    inputs:
+      fail_on_vulnerabilities:
+        description: 'Fail the workflow if vulnerabilities are found'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  detect-package-managers:
+    runs-on: ubuntu-latest
+    outputs:
+      has_npm: ${{ steps.detect.outputs.has_npm }}
+      has_pip: ${{ steps.detect.outputs.has_pip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect package managers
+        id: detect
+        run: |
+          # Check for npm/Node.js projects
+          if find . -name "package-lock.json" -o -name "package.json" | grep -q .; then
+            echo "has_npm=true" >> $GITHUB_OUTPUT
+            echo "Found npm project(s)"
+          else
+            echo "has_npm=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Check for Python projects
+          if find . -name "requirements*.txt" -o -name "pyproject.toml" -o -name "Pipfile.lock" -o -name "poetry.lock" | grep -q .; then
+            echo "has_pip=true" >> $GITHUB_OUTPUT
+            echo "Found Python project(s)"
+          else
+            echo "has_pip=false" >> $GITHUB_OUTPUT
+          fi
+
+  npm-audit:
+    needs: detect-package-managers
+    if: needs.detect-package-managers.outputs.has_npm == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ !inputs.fail_on_vulnerabilities }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Find and audit npm projects
+        id: npm-audit
+        run: |
+          echo "## npm Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          TOTAL_VULNS=0
+          PROJECTS_SCANNED=0
+
+          # Find all package-lock.json files (excludes node_modules)
+          while IFS= read -r lockfile; do
+            [ -z "$lockfile" ] && continue
+
+            PROJECT_DIR=$(dirname "$lockfile")
+            echo "### \`$PROJECT_DIR\`" >> $GITHUB_STEP_SUMMARY
+
+            cd "$PROJECT_DIR"
+
+            # Run npm audit and capture output
+            set +e
+            AUDIT_OUTPUT=$(npm audit --audit-level=${{ inputs.npm_audit_level }} 2>&1)
+            AUDIT_EXIT=$?
+            set -e
+
+            if [ $AUDIT_EXIT -eq 0 ]; then
+              echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            else
+              # Count vulnerabilities from output
+              VULN_COUNT=$(echo "$AUDIT_OUTPUT" | grep -oP '\d+ vulnerabilities' | grep -oP '\d+' | head -1 || echo "0")
+              TOTAL_VULNS=$((TOTAL_VULNS + VULN_COUNT))
+
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "$AUDIT_OUTPUT" | head -50 >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            PROJECTS_SCANNED=$((PROJECTS_SCANNED + 1))
+            cd - > /dev/null
+
+          done < <(find . -name "package-lock.json" -not -path "*/node_modules/*" 2>/dev/null)
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Projects scanned | $PROJECTS_SCANNED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total vulnerabilities | $TOTAL_VULNS |" >> $GITHUB_STEP_SUMMARY
+
+          echo "total_vulns=$TOTAL_VULNS" >> $GITHUB_OUTPUT
+
+          if [ $TOTAL_VULNS -gt 0 ] && [ "${{ inputs.fail_on_vulnerabilities }}" == "true" ]; then
+            exit 1
+          fi
+
+  pip-audit:
+    needs: detect-package-managers
+    if: needs.detect-package-managers.outputs.has_pip == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ !inputs.fail_on_vulnerabilities }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Find and audit Python projects
+        id: pip-audit
+        run: |
+          echo "## pip-audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          TOTAL_VULNS=0
+          PROJECTS_SCANNED=0
+
+          # Audit requirements.txt files
+          while IFS= read -r reqfile; do
+            [ -z "$reqfile" ] && continue
+
+            echo "### \`$reqfile\`" >> $GITHUB_STEP_SUMMARY
+
+            set +e
+            AUDIT_OUTPUT=$(pip-audit -r "$reqfile" --format columns 2>&1)
+            AUDIT_EXIT=$?
+            set -e
+
+            if [ $AUDIT_EXIT -eq 0 ]; then
+              echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            else
+              VULN_COUNT=$(echo "$AUDIT_OUTPUT" | grep -c "^Name" || echo "0")
+              # Subtract header line if present
+              [ $VULN_COUNT -gt 0 ] && VULN_COUNT=$((VULN_COUNT - 1))
+              TOTAL_VULNS=$((TOTAL_VULNS + VULN_COUNT))
+
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "$AUDIT_OUTPUT" | head -50 >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            PROJECTS_SCANNED=$((PROJECTS_SCANNED + 1))
+
+          done < <(find . -name "requirements*.txt" -not -path "*/venv/*" -not -path "*/.venv/*" 2>/dev/null)
+
+          # Audit pyproject.toml files
+          while IFS= read -r pyproject; do
+            [ -z "$pyproject" ] && continue
+
+            PROJECT_DIR=$(dirname "$pyproject")
+            echo "### \`$pyproject\`" >> $GITHUB_STEP_SUMMARY
+
+            cd "$PROJECT_DIR"
+
+            set +e
+            AUDIT_OUTPUT=$(pip-audit --format columns 2>&1)
+            AUDIT_EXIT=$?
+            set -e
+
+            if [ $AUDIT_EXIT -eq 0 ]; then
+              echo "No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "$AUDIT_OUTPUT" | head -50 >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            PROJECTS_SCANNED=$((PROJECTS_SCANNED + 1))
+            cd - > /dev/null
+
+          done < <(find . -name "pyproject.toml" -not -path "*/venv/*" -not -path "*/.venv/*" 2>/dev/null)
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Projects scanned | $PROJECTS_SCANNED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total vulnerabilities | $TOTAL_VULNS |" >> $GITHUB_STEP_SUMMARY
+
+          echo "total_vulns=$TOTAL_VULNS" >> $GITHUB_OUTPUT
+
+          if [ $TOTAL_VULNS -gt 0 ] && [ "${{ inputs.fail_on_vulnerabilities }}" == "true" ]; then
+            exit 1
+          fi
+
+  summary:
+    needs: [detect-package-managers, npm-audit, pip-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Audit Summary
+        run: |
+          echo "## Dependency Audit Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.detect-package-managers.outputs.has_npm }}" == "true" ]; then
+            if [ "${{ needs.npm-audit.result }}" == "success" ]; then
+              echo "| npm audit | Passed |" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.npm-audit.result }}" == "failure" ]; then
+              echo "| npm audit | Vulnerabilities found |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| npm audit | ${{ needs.npm-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| npm audit | Skipped (no npm projects) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.detect-package-managers.outputs.has_pip }}" == "true" ]; then
+            if [ "${{ needs.pip-audit.result }}" == "success" ]; then
+              echo "| pip-audit | Passed |" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.pip-audit.result }}" == "failure" ]; then
+              echo "| pip-audit | Vulnerabilities found |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| pip-audit | ${{ needs.pip-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| pip-audit | Skipped (no Python projects) |" >> $GITHUB_STEP_SUMMARY
+          fi
