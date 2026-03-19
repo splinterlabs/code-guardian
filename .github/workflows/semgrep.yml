@@ -70,6 +70,7 @@ jobs:
 
       - name: Build config string
         id: config
+        shell: bash
         run: |
           CONFIG="${{ inputs.config }}"
 
@@ -93,6 +94,7 @@ jobs:
 
       - name: Determine scan scope
         id: scope
+        shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" && "${{ inputs.scan_changed_only }}" == "true" ]]; then
             # Get changed files for PR
@@ -118,6 +120,7 @@ jobs:
       - name: Run Semgrep
         id: scan
         if: steps.scope.outputs.mode != 'skip'
+        shell: bash
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.semgrep_app_token }}
         run: |
@@ -174,6 +177,7 @@ jobs:
 
       - name: Generate summary
         if: always() && steps.scope.outputs.mode != 'skip'
+        shell: bash
         run: |
           if [[ -f results/semgrep.json ]]; then
             echo "## Semgrep Results" >> $GITHUB_STEP_SUMMARY
@@ -231,6 +235,7 @@ jobs:
 
       - name: Fail on findings
         if: inputs.fail_on_findings && steps.scan.outputs.findings_count > 0
+        shell: bash
         run: |
           echo "::error::Semgrep found ${{ steps.scan.outputs.findings_count }} security issue(s)"
           echo ""
