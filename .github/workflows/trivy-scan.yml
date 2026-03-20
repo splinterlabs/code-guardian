@@ -101,7 +101,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.69.3 - pinned due to supply chain compromise in v0.69.4
         with:
           scan-type: 'fs'
           scan-ref: ${{ matrix.dockerfile }}
@@ -133,7 +133,7 @@ jobs:
         image: ${{ fromJson(needs.detect-images.outputs.images) }}
     steps:
       - name: Run Trivy image scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.69.3 - pinned due to supply chain compromise in v0.69.4
         with:
           image-ref: ${{ matrix.image }}
           severity: ${{ inputs.severity }}
